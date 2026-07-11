@@ -118,6 +118,7 @@
       if (settings) {
         settings.defaultView = view;
         saveSettings(settings);
+        updateActionBanner(new Date());
       }
     });
   });
@@ -340,31 +341,58 @@
     updateActionBanner(now);
   }
 
+  var COURSES_PER_APPLICATION = 5;
+
+  function formatHour12(hour) {
+    return (hour === 0 ? 12 : hour > 12 ? hour - 12 : hour) + (hour >= 12 ? "pm" : "am");
+  }
+
   function updateActionBanner(now) {
     var banner = document.getElementById("actionBanner");
     var icon = document.getElementById("actionIcon");
     var text = document.getElementById("actionText");
-
-    var dailyTarget = settings.weeklyGoal ? Math.max(1, Math.round(settings.weeklyGoal / 7)) : 3;
-    var todayCount = apps.filter(function (a) { return a.dateApplied === todayISO(); }).length;
-    var hour = now.getHours();
+    var cta = document.getElementById("actionCta");
 
     banner.classList.remove("state-ok", "state-behind", "state-urgent");
 
-    if (todayCount >= dailyTarget) {
+    if ((settings.defaultView || "applications") === "courses") {
+      updateCoursesBanner(now, banner, icon, text, cta);
+    } else {
+      updateApplicationsBanner(now, banner, icon, text, cta);
+    }
+  }
+
+  function updateApplicationsBanner(now, banner, icon, text, cta) {
+    cta.textContent = "+ Log Application";
+
+    var dailyTarget = settings.weeklyGoal ? Math.max(1, Math.round(settings.weeklyGoal / 7)) : 3;
+    var appsToday = apps.filter(function (a) { return a.dateApplied === todayISO(); }).length;
+    var coursesToday = courses.filter(function (c) { return c.dateStarted === todayISO(); }).length;
+    var courseCredit = coursesToday / COURSES_PER_APPLICATION;
+    var effectiveToday = appsToday + courseCredit;
+    var hour = now.getHours();
+
+    var progressNote = coursesToday > 0
+      ? appsToday + " application" + (appsToday === 1 ? "" : "s") + " + " + coursesToday + " course" + (coursesToday === 1 ? "" : "s") + " logged today"
+      : appsToday + " application" + (appsToday === 1 ? "" : "s") + " logged today";
+
+    if (effectiveToday >= dailyTarget) {
       banner.classList.add("state-ok");
       icon.textContent = "✅";
-      text.textContent = "Daily goal hit — " + todayCount + " application" + (todayCount === 1 ? "" : "s") + " logged today. Nice work.";
+      text.textContent = "Daily goal hit — " + progressNote + ". Nice work.";
       return;
     }
 
-    var remaining = dailyTarget - todayCount;
-    var remainingText = remaining + " more application" + (remaining === 1 ? "" : "s") + " to hit today's goal";
+    var remaining = dailyTarget - effectiveToday;
+    var appsNeeded = Math.ceil(remaining);
+    var coursesNeeded = Math.ceil(remaining * COURSES_PER_APPLICATION);
+    var remainingText = appsNeeded + " more application" + (appsNeeded === 1 ? "" : "s") +
+      " (or " + coursesNeeded + " course" + (coursesNeeded === 1 ? "" : "s") + ") to hit today's goal";
 
-    if (todayCount === 0 && hour >= 15) {
+    if (effectiveToday === 0 && hour >= 15) {
       banner.classList.add("state-urgent");
       icon.textContent = "⚠";
-      text.textContent = "It's " + (hour >= 12 ? (hour - 12 === 0 ? 12 : hour - 12) : hour) + (hour >= 12 ? "pm" : "am") + " and you haven't logged a single application today.";
+      text.textContent = "It's " + formatHour12(hour) + " and you haven't logged anything today.";
     } else if (hour >= 17) {
       banner.classList.add("state-urgent");
       icon.textContent = "⚠";
@@ -377,6 +405,34 @@
       banner.classList.add("state-behind");
       icon.textContent = "🎯";
       text.textContent = "Today's goal: " + remainingText + ".";
+    }
+  }
+
+  function updateCoursesBanner(now, banner, icon, text, cta) {
+    cta.textContent = "+ Log Course";
+
+    var coursesToday = courses.filter(function (c) { return c.dateStarted === todayISO(); }).length;
+    var hour = now.getHours();
+
+    if (coursesToday > 0) {
+      banner.classList.add("state-ok");
+      icon.textContent = "✅";
+      text.textContent = coursesToday + " course" + (coursesToday === 1 ? "" : "s") + " logged today. Nice work.";
+      return;
+    }
+
+    if (hour >= 15) {
+      banner.classList.add("state-urgent");
+      icon.textContent = "⚠";
+      text.textContent = "It's " + formatHour12(hour) + " and you haven't logged any courses today.";
+    } else if (hour >= 12) {
+      banner.classList.add("state-behind");
+      icon.textContent = "⏰";
+      text.textContent = "No courses logged today yet — good time to work on one.";
+    } else {
+      banner.classList.add("state-behind");
+      icon.textContent = "🎯";
+      text.textContent = "Haven't logged a course today yet.";
     }
   }
 
@@ -489,7 +545,13 @@
   }
 
   document.getElementById("addAppBtn").addEventListener("click", function () { openAppModal(null); });
-  document.getElementById("actionCta").addEventListener("click", function () { openAppModal(null); });
+  document.getElementById("actionCta").addEventListener("click", function () {
+    if (settings && settings.defaultView === "courses") {
+      openCourseModal(null);
+    } else {
+      openAppModal(null);
+    }
+  });
   document.getElementById("appCancelBtn").addEventListener("click", function () { appModal.classList.add("hidden"); });
 
   document.getElementById("appSaveBtn").addEventListener("click", function () {
