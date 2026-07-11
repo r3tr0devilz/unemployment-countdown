@@ -3,11 +3,17 @@
 
   var SETTINGS_KEY = "jsc_settings";
   var APPS_KEY = "jsc_applications";
+  var COURSES_KEY = "jsc_courses";
+  var LAST_BACKUP_KEY = "jsc_last_backup";
 
   var settings = null;
   var apps = [];
+  var courses = [];
   var sortKey = "dateApplied";
   var sortDir = "desc";
+  var courseSortKey = "dateStarted";
+  var courseSortDir = "desc";
+  var autoBackupTimer = null;
 
   // ---------- storage ----------
 
@@ -36,6 +42,19 @@
 
   function saveApps() {
     localStorage.setItem(APPS_KEY, JSON.stringify(apps));
+  }
+
+  function loadCourses() {
+    try {
+      var raw = localStorage.getItem(COURSES_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveCourses() {
+    localStorage.setItem(COURSES_KEY, JSON.stringify(courses));
   }
 
   function uid() {
@@ -77,13 +96,37 @@
 
   function applySettingsToUI() {
     document.getElementById("deadlineLabel").textContent = settings.label || "Deadline";
+    setActiveView(settings.defaultView || "applications");
+    scheduleAutoBackup();
   }
+
+  function setActiveView(view) {
+    document.getElementById("applicationsSection").classList.toggle("hidden", view !== "applications");
+    document.getElementById("coursesSection").classList.toggle("hidden", view !== "courses");
+    document.getElementById("statsRowApps").classList.toggle("hidden", view !== "applications");
+    document.getElementById("statsRowCourses").classList.toggle("hidden", view !== "courses");
+    document.getElementById("tabApplications").classList.toggle("active", view === "applications");
+    document.getElementById("tabCourses").classList.toggle("active", view === "courses");
+  }
+
+  document.querySelectorAll(".tab-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var view = btn.dataset.view;
+      setActiveView(view);
+      if (settings) {
+        settings.defaultView = view;
+        saveSettings(settings);
+      }
+    });
+  });
 
   document.getElementById("setupSave").addEventListener("click", function () {
     var deadline = document.getElementById("setupDeadline").value;
     var label = document.getElementById("setupLabel").value.trim() || "Deadline";
     var start = document.getElementById("setupStart").value;
     var goal = document.getElementById("setupGoal").value;
+    var view = document.getElementById("setupView").value;
+    var autoBackup = document.getElementById("setupAutoBackup").value;
 
     if (!deadline || !start) {
       alert("Please fill in both dates to continue.");
@@ -94,7 +137,9 @@
       deadline: deadline,
       label: label,
       startDate: start,
-      weeklyGoal: goal ? parseInt(goal, 10) : 0
+      weeklyGoal: goal ? parseInt(goal, 10) : 0,
+      defaultView: view,
+      autoBackupMinutes: autoBackup ? parseInt(autoBackup, 10) : 0
     });
 
     applySettingsToUI();
@@ -111,6 +156,8 @@
     document.getElementById("setLabel").value = settings.label;
     document.getElementById("setStart").value = settings.startDate;
     document.getElementById("setGoal").value = settings.weeklyGoal || "";
+    document.getElementById("setView").value = settings.defaultView || "applications";
+    document.getElementById("setAutoBackup").value = settings.autoBackupMinutes || 0;
     settingsModal.classList.remove("hidden");
   });
 
@@ -123,6 +170,8 @@
     var label = document.getElementById("setLabel").value.trim() || "Deadline";
     var start = document.getElementById("setStart").value;
     var goal = document.getElementById("setGoal").value;
+    var view = document.getElementById("setView").value;
+    var autoBackup = document.getElementById("setAutoBackup").value;
 
     if (!deadline || !start) {
       alert("Please fill in both dates.");
@@ -133,7 +182,9 @@
       deadline: deadline,
       label: label,
       startDate: start,
-      weeklyGoal: goal ? parseInt(goal, 10) : 0
+      weeklyGoal: goal ? parseInt(goal, 10) : 0,
+      defaultView: view,
+      autoBackupMinutes: autoBackup ? parseInt(autoBackup, 10) : 0
     });
 
     applySettingsToUI();
@@ -143,9 +194,10 @@
   });
 
   document.getElementById("wipeBtn").addEventListener("click", function () {
-    if (confirm("This will permanently erase all settings and logged applications from this browser. Continue?")) {
+    if (confirm("This will permanently erase all settings, applications, and courses from this browser. Continue?")) {
       localStorage.removeItem(SETTINGS_KEY);
       localStorage.removeItem(APPS_KEY);
+      localStorage.removeItem(COURSES_KEY);
       location.reload();
     }
   });
@@ -189,11 +241,60 @@
       document.getElementById("numSecs").textContent = pad(s);
       sub.classList.remove("overdue");
       sub.textContent = "until " + deadline.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+
+      var numbersEl = document.getElementById("countdownNumbers");
+      numbersEl.classList.remove("urgency-warn", "urgency-critical");
+      if (d <= 7) numbersEl.classList.add("urgency-critical");
+      else if (d <= 30) numbersEl.classList.add("urgency-warn");
     }
 
     var startD = new Date(settings.startDate + "T00:00:00");
     var dayOfSearch = daysBetween(startD, now) + 1;
-    document.getElementById("statDay").textContent = dayOfSearch > 0 ? dayOfSearch : 1;
+    var dayText = dayOfSearch > 0 ? dayOfSearch : 1;
+    document.getElementById("statDay").textContent = dayText;
+    document.getElementById("statCourseDay").textContent = dayText;
+
+    updateActionBanner(now);
+  }
+
+  function updateActionBanner(now) {
+    var banner = document.getElementById("actionBanner");
+    var icon = document.getElementById("actionIcon");
+    var text = document.getElementById("actionText");
+
+    var dailyTarget = settings.weeklyGoal ? Math.max(1, Math.round(settings.weeklyGoal / 7)) : 3;
+    var todayCount = apps.filter(function (a) { return a.dateApplied === todayISO(); }).length;
+    var hour = now.getHours();
+
+    banner.classList.remove("state-ok", "state-behind", "state-urgent");
+
+    if (todayCount >= dailyTarget) {
+      banner.classList.add("state-ok");
+      icon.textContent = "✅";
+      text.textContent = "Daily goal hit — " + todayCount + " application" + (todayCount === 1 ? "" : "s") + " logged today. Nice work.";
+      return;
+    }
+
+    var remaining = dailyTarget - todayCount;
+    var remainingText = remaining + " more application" + (remaining === 1 ? "" : "s") + " to hit today's goal";
+
+    if (todayCount === 0 && hour >= 15) {
+      banner.classList.add("state-urgent");
+      icon.textContent = "⚠";
+      text.textContent = "It's " + (hour >= 12 ? (hour - 12 === 0 ? 12 : hour - 12) : hour) + (hour >= 12 ? "pm" : "am") + " and you haven't logged a single application today.";
+    } else if (hour >= 17) {
+      banner.classList.add("state-urgent");
+      icon.textContent = "⚠";
+      text.textContent = "Day's almost over — " + remainingText + ".";
+    } else if (hour >= 12) {
+      banner.classList.add("state-behind");
+      icon.textContent = "⏰";
+      text.textContent = remainingText + " — good time to knock some out.";
+    } else {
+      banner.classList.add("state-behind");
+      icon.textContent = "🎯";
+      text.textContent = "Today's goal: " + remainingText + ".";
+    }
   }
 
   // ---------- applications CRUD ----------
@@ -213,10 +314,24 @@
     document.getElementById("statWeek").textContent = settings && settings.weeklyGoal
       ? thisWeek + " / " + settings.weeklyGoal
       : thisWeek;
+
+    document.getElementById("statCoursesTotal").textContent = courses.length;
+    document.getElementById("statCoursesInProgress").textContent =
+      courses.filter(function (c) { return c.status === "InProgress"; }).length;
+    document.getElementById("statCoursesCompleted").textContent =
+      courses.filter(function (c) { return c.status === "Completed"; }).length;
+    document.getElementById("statCoursesNotStarted").textContent =
+      courses.filter(function (c) { return c.status === "NotStarted"; }).length;
+
+    if (settings) updateActionBanner(now);
+  }
+
+  function statusLabel(status) {
+    return status.replace(/([a-z])([A-Z])/g, "$1 $2");
   }
 
   function statusBadge(status) {
-    return '<span class="badge badge-' + status + '">' + status + "</span>";
+    return '<span class="badge badge-' + status + '">' + statusLabel(status) + "</span>";
   }
 
   function escapeHtml(str) {
@@ -291,6 +406,7 @@
   }
 
   document.getElementById("addAppBtn").addEventListener("click", function () { openAppModal(null); });
+  document.getElementById("actionCta").addEventListener("click", function () { openAppModal(null); });
   document.getElementById("appCancelBtn").addEventListener("click", function () { appModal.classList.add("hidden"); });
 
   document.getElementById("appSaveBtn").addEventListener("click", function () {
@@ -335,12 +451,12 @@
     }
   });
 
-  // ---------- search / filter / sort ----------
+  // ---------- search / filter / sort (applications) ----------
 
   document.getElementById("searchBox").addEventListener("input", renderTable);
   document.getElementById("statusFilter").addEventListener("change", renderTable);
 
-  document.querySelectorAll("th[data-sort]").forEach(function (th) {
+  document.querySelectorAll("#appsTable th[data-sort]").forEach(function (th) {
     th.addEventListener("click", function () {
       var key = th.dataset.sort;
       if (sortKey === key) {
@@ -353,17 +469,183 @@
     });
   });
 
-  // ---------- export / import ----------
+  // ---------- courses CRUD ----------
 
-  document.getElementById("exportBtn").addEventListener("click", function () {
-    var payload = { settings: settings, applications: apps, exportedAt: new Date().toISOString() };
+  function getCoursesFilteredSorted() {
+    var q = document.getElementById("courseSearchBox").value.trim().toLowerCase();
+    var statusFilter = document.getElementById("courseStatusFilter").value;
+
+    var list = courses.filter(function (c) {
+      var matchesQ = !q ||
+        (c.courseName && c.courseName.toLowerCase().indexOf(q) !== -1) ||
+        (c.provider && c.provider.toLowerCase().indexOf(q) !== -1);
+      var matchesStatus = !statusFilter || c.status === statusFilter;
+      return matchesQ && matchesStatus;
+    });
+
+    list.sort(function (a, b) {
+      var va = (a[courseSortKey] || "").toString().toLowerCase();
+      var vb = (b[courseSortKey] || "").toString().toLowerCase();
+      if (va < vb) return courseSortDir === "asc" ? -1 : 1;
+      if (va > vb) return courseSortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return list;
+  }
+
+  function renderCoursesTable() {
+    var list = getCoursesFilteredSorted();
+    var tbody = document.getElementById("coursesTableBody");
+    tbody.innerHTML = "";
+
+    document.getElementById("coursesEmptyState").classList.toggle("hidden", courses.length !== 0);
+
+    list.forEach(function (c) {
+      var tr = document.createElement("tr");
+      tr.dataset.id = c.id;
+      tr.innerHTML =
+        "<td>" + escapeHtml(c.dateStarted) + "</td>" +
+        "<td>" + escapeHtml(c.courseName) + "</td>" +
+        "<td>" + escapeHtml(c.provider) + "</td>" +
+        "<td>" + statusBadge(c.status) + "</td>" +
+        "<td>" + (c.link ? '<a href="' + escapeHtml(c.link) + '" target="_blank" rel="noopener">link</a>' : "") + "</td>" +
+        '<td class="notes-cell">' + escapeHtml(c.notes) + "</td>" +
+        "<td></td>";
+      tr.addEventListener("click", function () { openCourseModal(c.id); });
+      tbody.appendChild(tr);
+    });
+
+    renderStats();
+  }
+
+  var courseModal = document.getElementById("courseModal");
+
+  function openCourseModal(id) {
+    var c = id ? courses.find(function (x) { return x.id === id; }) : null;
+    document.getElementById("courseModalTitle").textContent = c ? "Edit Course" : "Log Course";
+    document.getElementById("courseId").value = c ? c.id : "";
+    document.getElementById("courseName").value = c ? c.courseName : "";
+    document.getElementById("courseProvider").value = c ? c.provider : "";
+    document.getElementById("courseDateStarted").value = c ? c.dateStarted : todayISO();
+    document.getElementById("courseStatus").value = c ? c.status : "InProgress";
+    document.getElementById("courseLink").value = c ? c.link : "";
+    document.getElementById("courseNotes").value = c ? c.notes : "";
+    document.getElementById("courseDeleteBtn").classList.toggle("hidden", !c);
+    courseModal.classList.remove("hidden");
+    document.getElementById("courseName").focus();
+  }
+
+  document.getElementById("addCourseBtn").addEventListener("click", function () { openCourseModal(null); });
+  document.getElementById("courseCancelBtn").addEventListener("click", function () { courseModal.classList.add("hidden"); });
+
+  document.getElementById("courseSaveBtn").addEventListener("click", function () {
+    var courseName = document.getElementById("courseName").value.trim();
+    var dateStarted = document.getElementById("courseDateStarted").value;
+
+    if (!courseName || !dateStarted) {
+      alert("Course name and date started are required.");
+      return;
+    }
+
+    var id = document.getElementById("courseId").value;
+    var record = {
+      id: id || uid(),
+      courseName: courseName,
+      provider: document.getElementById("courseProvider").value.trim(),
+      dateStarted: dateStarted,
+      status: document.getElementById("courseStatus").value,
+      link: document.getElementById("courseLink").value.trim(),
+      notes: document.getElementById("courseNotes").value.trim()
+    };
+
+    if (id) {
+      var idx = courses.findIndex(function (x) { return x.id === id; });
+      if (idx !== -1) courses[idx] = record;
+    } else {
+      courses.push(record);
+    }
+
+    saveCourses();
+    courseModal.classList.add("hidden");
+    renderCoursesTable();
+  });
+
+  document.getElementById("courseDeleteBtn").addEventListener("click", function () {
+    var id = document.getElementById("courseId").value;
+    if (id && confirm("Delete this course?")) {
+      courses = courses.filter(function (x) { return x.id !== id; });
+      saveCourses();
+      courseModal.classList.add("hidden");
+      renderCoursesTable();
+    }
+  });
+
+  document.getElementById("courseSearchBox").addEventListener("input", renderCoursesTable);
+  document.getElementById("courseStatusFilter").addEventListener("change", renderCoursesTable);
+
+  document.querySelectorAll("#coursesTable th[data-sort]").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var key = th.dataset.sort;
+      if (courseSortKey === key) {
+        courseSortDir = courseSortDir === "asc" ? "desc" : "asc";
+      } else {
+        courseSortKey = key;
+        courseSortDir = "asc";
+      }
+      renderCoursesTable();
+    });
+  });
+
+  // ---------- export / import / auto-backup ----------
+
+  function downloadBackup(auto) {
+    var now = new Date();
+    var payload = { settings: settings, applications: apps, courses: courses, exportedAt: now.toISOString() };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = "job-search-backup-" + todayISO() + ".json";
+    var stamp = now.toISOString().replace(/[:.]/g, "-");
+    a.download = (auto ? "job-search-autobackup-" : "job-search-backup-") + stamp + ".json";
     a.click();
     URL.revokeObjectURL(url);
+    localStorage.setItem(LAST_BACKUP_KEY, now.toISOString());
+    updateAutoBackupStatus();
+  }
+
+  function updateAutoBackupStatus() {
+    var el = document.getElementById("autoBackupStatus");
+    var minutes = settings ? (settings.autoBackupMinutes || 0) : 0;
+
+    if (!minutes) {
+      el.textContent = "Auto-backup: off";
+      return;
+    }
+
+    var label = minutes < 60 ? minutes + " min"
+      : minutes < 1440 ? (minutes / 60) + "h"
+      : (minutes / 1440) + "d";
+
+    var last = localStorage.getItem(LAST_BACKUP_KEY);
+    var lastText = last ? new Date(last).toLocaleTimeString() : "never yet";
+    el.textContent = "Auto-backup: every " + label + " (last: " + lastText + ")";
+  }
+
+  function scheduleAutoBackup() {
+    if (autoBackupTimer) {
+      clearInterval(autoBackupTimer);
+      autoBackupTimer = null;
+    }
+    var minutes = settings ? (settings.autoBackupMinutes || 0) : 0;
+    if (minutes > 0) {
+      autoBackupTimer = setInterval(function () { downloadBackup(true); }, minutes * 60 * 1000);
+    }
+    updateAutoBackupStatus();
+  }
+
+  document.getElementById("exportBtn").addEventListener("click", function () {
+    downloadBackup(false);
   });
 
   document.getElementById("importBtn").addEventListener("click", function () {
@@ -377,16 +659,21 @@
     reader.onload = function () {
       try {
         var data = JSON.parse(reader.result);
-        if (!confirm("Import will replace your current settings and applications in this browser. Continue?")) return;
+        if (!confirm("Import will replace your current settings, applications, and courses in this browser. Continue?")) return;
         if (data.settings) saveSettings(data.settings);
         if (Array.isArray(data.applications)) {
           apps = data.applications;
           saveApps();
         }
+        if (Array.isArray(data.courses)) {
+          courses = data.courses;
+          saveCourses();
+        }
         applySettingsToUI();
         document.getElementById("setupOverlay").classList.add("hidden");
         tick();
         renderTable();
+        renderCoursesTable();
       } catch (err) {
         alert("Could not read that file. Make sure it's a backup exported from this app.");
       }
@@ -399,7 +686,9 @@
 
   ensureSettings();
   apps = loadApps();
+  courses = loadCourses();
   renderTable();
+  renderCoursesTable();
   tick();
   setInterval(tick, 1000);
 })();

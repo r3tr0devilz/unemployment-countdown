@@ -102,7 +102,8 @@ html, body {
 
 .countdown-label {
   font-size: 1.1rem;
-  color: var(--muted);
+  color: var(--danger);
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   margin-bottom: 14px;
@@ -141,6 +142,15 @@ html, body {
   margin-top: 4px;
 }
 
+.colon {
+  font-size: clamp(3rem, 10vw, 6.5rem);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0.5;
+  align-self: flex-start;
+}
+
 .countdown-sub {
   margin-top: 14px;
   color: var(--muted);
@@ -152,13 +162,88 @@ html, body {
   font-weight: 600;
 }
 
+/* Urgency escalation on the countdown itself */
+.countdown-numbers.urgency-warn .num {
+  background: linear-gradient(135deg, var(--warn), #ffcf6b);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+.countdown-numbers.urgency-critical .num {
+  background: linear-gradient(135deg, var(--danger), #ff8a97);
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: pulseNum 1.6s ease-in-out infinite;
+}
+
+@keyframes pulseNum {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Action banner */
+.action-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 28px auto 0;
+  max-width: 640px;
+  padding: 14px 20px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.action-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.action-text {
+  font-weight: 600;
+  font-size: 0.98rem;
+}
+
+.action-cta {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+}
+
+.action-banner.state-ok {
+  background: rgba(34, 211, 165, 0.12);
+  border-color: rgba(34, 211, 165, 0.35);
+}
+.action-banner.state-ok .action-text { color: var(--accent-2); }
+.action-banner.state-ok .action-cta { display: none; }
+
+.action-banner.state-behind {
+  background: rgba(245, 165, 36, 0.12);
+  border-color: rgba(245, 165, 36, 0.4);
+}
+.action-banner.state-behind .action-text { color: var(--warn); }
+
+.action-banner.state-urgent {
+  background: rgba(239, 75, 95, 0.14);
+  border-color: rgba(239, 75, 95, 0.5);
+  animation: bannerPulse 1.8s ease-in-out infinite;
+}
+.action-banner.state-urgent .action-text { color: var(--danger); }
+
+@keyframes bannerPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 75, 95, 0.35); }
+  50% { box-shadow: 0 0 0 10px rgba(239, 75, 95, 0); }
+}
+
 /* Stats */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 14px;
   margin: 36px auto 0;
-  max-width: 800px;
+  max-width: 960px;
 }
 
 .stat-card {
@@ -181,9 +266,39 @@ html, body {
   letter-spacing: 0.05em;
 }
 
+/* View tabs */
+.view-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 50px;
+}
+
+.tab-btn {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  padding: 10px 20px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, var(--accent), #7aa2ff);
+  border-color: transparent;
+  color: white;
+}
+
 /* Tracker */
 .tracker {
-  margin-top: 50px;
+  margin-top: 20px;
 }
 
 .tracker-header {
@@ -274,6 +389,11 @@ tbody tr:hover { background: rgba(91, 140, 255, 0.06); cursor: pointer; }
 .badge-Rejected { background: rgba(239,75,95,0.15); color: var(--danger); }
 .badge-Ghosted { background: rgba(135,146,168,0.15); color: var(--muted); }
 
+.badge-NotStarted { background: rgba(135,146,168,0.15); color: var(--muted); }
+.badge-InProgress { background: rgba(91,140,255,0.15); color: var(--accent); }
+.badge-Completed { background: rgba(34,211,165,0.25); color: var(--accent-2); }
+.badge-Abandoned { background: rgba(239,75,95,0.15); color: var(--danger); }
+
 .empty-state {
   padding: 40px 20px;
   text-align: center;
@@ -285,6 +405,10 @@ tbody tr:hover { background: rgba(91, 140, 255, 0.06); cursor: pointer; }
   color: var(--muted);
   font-size: 0.8rem;
   margin-top: 30px;
+}
+
+.foot span + span::before {
+  content: " · ";
 }
 
 /* Overlays / modals */
