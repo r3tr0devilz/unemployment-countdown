@@ -465,6 +465,32 @@ tbody tr:hover { background: rgba(91, 140, 255, 0.06); cursor: pointer; }
 
 .setup-card textarea { resize: vertical; }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.checkbox-row #testTickSoundBtn {
+  margin-left: auto;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.checkbox-row input {
+  width: auto;
+  flex: none;
+}
+
+.checkbox-row label {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
 #setupSave { width: 100%; margin-top: 24px; }
 
 .modal-actions {

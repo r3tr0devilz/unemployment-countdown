@@ -14,6 +14,8 @@
   var courseSortKey = "dateStarted";
   var courseSortDir = "desc";
   var autoBackupTimer = null;
+  var audioCtx = null;
+  var lastPlayedMinuteKey = null;
 
   // ---------- storage ----------
 
@@ -127,6 +129,7 @@
     var goal = document.getElementById("setupGoal").value;
     var view = document.getElementById("setupView").value;
     var autoBackup = document.getElementById("setupAutoBackup").value;
+    var tickSound = document.getElementById("setupTickSound").checked;
 
     if (!deadline || !start) {
       alert("Please fill in both dates to continue.");
@@ -139,7 +142,8 @@
       startDate: start,
       weeklyGoal: goal ? parseInt(goal, 10) : 0,
       defaultView: view,
-      autoBackupMinutes: autoBackup ? parseInt(autoBackup, 10) : 0
+      autoBackupMinutes: autoBackup ? parseInt(autoBackup, 10) : 0,
+      tickSound: tickSound
     });
 
     applySettingsToUI();
@@ -158,7 +162,12 @@
     document.getElementById("setGoal").value = settings.weeklyGoal || "";
     document.getElementById("setView").value = settings.defaultView || "applications";
     document.getElementById("setAutoBackup").value = settings.autoBackupMinutes || 0;
+    document.getElementById("setTickSound").checked = !!settings.tickSound;
     settingsModal.classList.remove("hidden");
+  });
+
+  document.getElementById("testTickSoundBtn").addEventListener("click", function () {
+    ensureAudioCtx().then(playTickSound);
   });
 
   document.getElementById("settingsCancelBtn").addEventListener("click", function () {
@@ -172,6 +181,7 @@
     var goal = document.getElementById("setGoal").value;
     var view = document.getElementById("setView").value;
     var autoBackup = document.getElementById("setAutoBackup").value;
+    var tickSound = document.getElementById("setTickSound").checked;
 
     if (!deadline || !start) {
       alert("Please fill in both dates.");
@@ -184,7 +194,8 @@
       startDate: start,
       weeklyGoal: goal ? parseInt(goal, 10) : 0,
       defaultView: view,
-      autoBackupMinutes: autoBackup ? parseInt(autoBackup, 10) : 0
+      autoBackupMinutes: autoBackup ? parseInt(autoBackup, 10) : 0,
+      tickSound: tickSound
     });
 
     applySettingsToUI();
@@ -209,6 +220,69 @@
     location.reload();
   });
 
+  // ---------- tick sound ----------
+
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    }
+    if (audioCtx.state === "suspended") {
+      return audioCtx.resume();
+    }
+    return Promise.resolve();
+  }
+
+  document.addEventListener("click", function () { ensureAudioCtx(); });
+
+  function playClack(startTime, freq) {
+    var duration = 0.09;
+    var bufferSize = Math.floor(audioCtx.sampleRate * duration);
+    var buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    var data = buffer.getChannelData(0);
+    for (var i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2.5);
+    }
+
+    var noise = audioCtx.createBufferSource();
+    noise.buffer = buffer;
+
+    var filter = audioCtx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = freq;
+    filter.Q.value = 2;
+
+    var gain = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.9, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+    noise.connect(filter).connect(gain).connect(audioCtx.destination);
+    noise.start(startTime);
+    noise.stop(startTime + duration);
+  }
+
+  function playTickSound() {
+    if (!audioCtx || audioCtx.state !== "running") return;
+    var now = audioCtx.currentTime;
+    playClack(now, 1400);
+    playClack(now + 0.09, 2200);
+  }
+
+  function checkMinuteTick(now) {
+    var minuteKey = now.getFullYear() + "-" + now.getMonth() + "-" + now.getDate() + "-" + now.getHours() + "-" + now.getMinutes();
+    if (lastPlayedMinuteKey === null) {
+      lastPlayedMinuteKey = minuteKey;
+      return;
+    }
+    if (minuteKey !== lastPlayedMinuteKey) {
+      lastPlayedMinuteKey = minuteKey;
+      if (settings && settings.tickSound) playTickSound();
+    }
+  }
+
   // ---------- clock + countdown ----------
 
   function pad(n) {
@@ -220,6 +294,8 @@
     document.getElementById("clock").textContent =
       now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) +
       "  " + now.toLocaleTimeString();
+
+    checkMinuteTick(now);
 
     if (!settings) return;
 

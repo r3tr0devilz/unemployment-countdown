@@ -41,6 +41,11 @@
       <option value="1440">Every day</option>
     </select>
 
+    <div class="checkbox-row">
+      <input type="checkbox" id="setupTickSound" />
+      <label for="setupTickSound">Play a tick sound every minute (airport departure-board click)</label>
+    </div>
+
     <button id="setupSave" class="btn btn-primary">Start the countdown</button>
   </div>
 </div>
@@ -314,6 +319,12 @@
       <option value="360">Every 6 hours</option>
       <option value="1440">Every day</option>
     </select>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="setTickSound" />
+      <label for="setTickSound">Play a tick sound every minute (airport departure-board click)</label>
+      <button type="button" id="testTickSoundBtn" class="btn btn-ghost">Test sound</button>
+    </div>
 
     <div class="modal-actions">
       <button id="wipeBtn" class="btn btn-danger">Erase all data</button>
