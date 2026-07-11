@@ -194,12 +194,19 @@
   });
 
   document.getElementById("wipeBtn").addEventListener("click", function () {
-    if (confirm("This will permanently erase all settings, applications, and courses from this browser. Continue?")) {
-      localStorage.removeItem(SETTINGS_KEY);
-      localStorage.removeItem(APPS_KEY);
-      localStorage.removeItem(COURSES_KEY);
-      location.reload();
+    var phrase = "DELETE ALL DATA";
+    var typed = prompt(
+      "This will permanently erase all settings, applications, and courses from this browser.\n\nType " + phrase + " to confirm:"
+    );
+    if (typed === null) return;
+    if (typed.trim() !== phrase) {
+      alert("That didn't match. Nothing was deleted.");
+      return;
     }
+    localStorage.removeItem(SETTINGS_KEY);
+    localStorage.removeItem(APPS_KEY);
+    localStorage.removeItem(COURSES_KEY);
+    location.reload();
   });
 
   // ---------- clock + countdown ----------
