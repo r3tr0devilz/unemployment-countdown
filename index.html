@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+<title>Job Search Countdown</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⏳</text></svg>" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="setupOverlay" class="overlay hidden">
+  <div class="setup-card">
+    <h1>Set up your countdown</h1>
+    <p class="muted">This runs entirely in your browser — nothing is uploaded anywhere. Fill this in once; you can change it later from Settings.</p>
+
+    <label for="setupDeadline">Deadline date</label>
+    <input type="date" id="setupDeadline" />
+
+    <label for="setupLabel">What happens on that date?</label>
+    <input type="text" id="setupLabel" placeholder="e.g. Unemployment benefits end / Savings run out / My self-imposed deadline" />
+
+    <label for="setupStart">When did your search start?</label>
+    <input type="date" id="setupStart" />
+
+    <label for="setupGoal">Weekly application goal (optional)</label>
+    <input type="number" id="setupGoal" min="0" placeholder="e.g. 10" />
+
+    <button id="setupSave" class="btn btn-primary">Start the countdown</button>
+  </div>
+</div>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="topbar-actions">
+      <button id="addAppBtn" class="btn btn-primary">+ Log Application</button>
+      <button id="settingsBtn" class="btn btn-ghost" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="countdown-block">
+      <div class="countdown-label" id="deadlineLabel">Deadline</div>
+      <div class="countdown-numbers" id="countdownNumbers">
+        <div class="unit"><span class="num" id="numDays">--</span><span class="unit-label">days</span></div>
+        <div class="unit"><span class="num" id="numHours">--</span><span class="unit-label">hrs</span></div>
+        <div class="unit"><span class="num" id="numMins">--</span><span class="unit-label">min</span></div>
+        <div class="unit"><span class="num" id="numSecs">--</span><span class="unit-label">sec</span></div>
+      </div>
+      <div class="countdown-sub" id="countdownSub"></div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="statDay">--</div>
+        <div class="stat-label">Day of search</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statTotal">0</div>
+        <div class="stat-label">Total applications</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statWeek">0</div>
+        <div class="stat-label" id="statWeekLabel">This week</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statToday">0</div>
+        <div class="stat-label">Today</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tracker">
+    <div class="tracker-header">
+      <h2>Applications</h2>
+      <div class="tracker-controls">
+        <input type="search" id="searchBox" placeholder="Search company or role…" />
+        <select id="statusFilter">
+          <option value="">All statuses</option>
+          <option value="Applied">Applied</option>
+          <option value="Screening">Screening</option>
+          <option value="Interview">Interview</option>
+          <option value="Offer">Offer</option>
+          <option value="Rejected">Rejected</option>
+          <option value="Ghosted">Ghosted</option>
+        </select>
+        <button id="exportBtn" class="btn btn-ghost">Export</button>
+        <button id="importBtn" class="btn btn-ghost">Import</button>
+        <input type="file" id="importFile" accept="application/json" hidden />
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="appsTable">
+        <thead>
+          <tr>
+            <th data-sort="dateApplied">Date ▾</th>
+            <th data-sort="company">Company</th>
+            <th data-sort="role">Role</th>
+            <th data-sort="status">Status</th>
+            <th>Link</th>
+            <th>Notes</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="appsTableBody"></tbody>
+      </table>
+      <div id="emptyState" class="empty-state hidden">
+        No applications logged yet. Click <strong>+ Log Application</strong> to add your first one.
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>Your data stays in this browser (localStorage). Export regularly to back it up.</span>
+  </footer>
+</div>
+
+<div id="appModal" class="overlay hidden">
+  <div class="setup-card">
+    <h1 id="appModalTitle">Log Application</h1>
+    <input type="hidden" id="appId" />
+
+    <label for="appCompany">Company *</label>
+    <input type="text" id="appCompany" required />
+
+    <label for="appRole">Role</label>
+    <input type="text" id="appRole" />
+
+    <label for="appDate">Date applied *</label>
+    <input type="date" id="appDate" required />
+
+    <label for="appStatus">Status</label>
+    <select id="appStatus">
+      <option>Applied</option>
+      <option>Screening</option>
+      <option>Interview</option>
+      <option>Offer</option>
+      <option>Rejected</option>
+      <option>Ghosted</option>
+    </select>
+
+    <label for="appLink">Link (job posting)</label>
+    <input type="url" id="appLink" placeholder="https://…" />
+
+    <label for="appNotes">Notes</label>
+    <textarea id="appNotes" rows="3"></textarea>
+
+    <div class="modal-actions">
+      <button id="appDeleteBtn" class="btn btn-danger hidden">Delete</button>
+      <div class="spacer"></div>
+      <button id="appCancelBtn" class="btn btn-ghost">Cancel</button>
+      <button id="appSaveBtn" class="btn btn-primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="settingsModal" class="overlay hidden">
+  <div class="setup-card">
+    <h1>Settings</h1>
+
+    <label for="setDeadline">Deadline date</label>
+    <input type="date" id="setDeadline" />
+
+    <label for="setLabel">Deadline label</label>
+    <input type="text" id="setLabel" />
+
+    <label for="setStart">Search start date</label>
+    <input type="date" id="setStart" />
+
+    <label for="setGoal">Weekly application goal</label>
+    <input type="number" id="setGoal" min="0" />
+
+    <div class="modal-actions">
+      <button id="wipeBtn" class="btn btn-danger">Erase all data</button>
+      <div class="spacer"></div>
+      <button id="settingsCancelBtn" class="btn btn-ghost">Cancel</button>
+      <button id="settingsSaveBtn" class="btn btn-primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
