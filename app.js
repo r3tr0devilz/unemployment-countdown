@@ -7,11 +7,13 @@
   var LAST_BACKUP_KEY = "jsc_last_backup";
   var SYNC_KEY = "jsc_sync_config";
   var LOCAL_UPDATED_KEY = "jsc_local_updated_at";
+  var TOMBSTONES_KEY = "jsc_tombstones";
   var SYNC_FILE_PATH = "data.json";
 
   var settings = null;
   var apps = [];
   var courses = [];
+  var tombstones = { apps: {}, courses: {} };
   var sortKey = "dateApplied";
   var sortDir = "desc";
   var courseSortKey = "dateStarted";
@@ -65,6 +67,21 @@
 
   function saveCourses() {
     localStorage.setItem(COURSES_KEY, JSON.stringify(courses));
+    touchLocalUpdated();
+  }
+
+  function loadTombstones() {
+    try {
+      var raw = localStorage.getItem(TOMBSTONES_KEY);
+      var parsed = raw ? JSON.parse(raw) : null;
+      return parsed || { apps: {}, courses: {} };
+    } catch (e) {
+      return { apps: {}, courses: {} };
+    }
+  }
+
+  function saveTombstones() {
+    localStorage.setItem(TOMBSTONES_KEY, JSON.stringify(tombstones));
     touchLocalUpdated();
   }
 
@@ -606,7 +623,8 @@
       dateApplied: dateApplied,
       status: document.getElementById("appStatus").value,
       link: document.getElementById("appLink").value.trim(),
-      notes: document.getElementById("appNotes").value.trim()
+      notes: document.getElementById("appNotes").value.trim(),
+      updatedAt: new Date().toISOString()
     };
 
     if (id) {
@@ -626,6 +644,8 @@
     if (id && confirm("Delete this application?")) {
       apps = apps.filter(function (x) { return x.id !== id; });
       saveApps();
+      tombstones.apps[id] = new Date().toISOString();
+      saveTombstones();
       appModal.classList.add("hidden");
       renderTable();
     }
@@ -736,7 +756,8 @@
       dateStarted: dateStarted,
       status: document.getElementById("courseStatus").value,
       link: document.getElementById("courseLink").value.trim(),
-      notes: document.getElementById("courseNotes").value.trim()
+      notes: document.getElementById("courseNotes").value.trim(),
+      updatedAt: new Date().toISOString()
     };
 
     if (id) {
@@ -756,6 +777,8 @@
     if (id && confirm("Delete this course?")) {
       courses = courses.filter(function (x) { return x.id !== id; });
       saveCourses();
+      tombstones.courses[id] = new Date().toISOString();
+      saveTombstones();
       courseModal.classList.add("hidden");
       renderCoursesTable();
     }
@@ -781,7 +804,7 @@
 
   function downloadBackup(auto) {
     var now = new Date();
-    var payload = { settings: settings, applications: apps, courses: courses, exportedAt: now.toISOString() };
+    var payload = { settings: settings, applications: apps, courses: courses, tombstones: tombstones, exportedAt: now.toISOString() };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
@@ -849,6 +872,10 @@
           courses = data.courses;
           saveCourses();
         }
+        if (data.tombstones) {
+          tombstones = data.tombstones;
+          saveTombstones();
+        }
         applySettingsToUI();
         document.getElementById("setupOverlay").classList.add("hidden");
         tick();
@@ -901,11 +928,12 @@
     });
   }
 
-  function pushToGitHub(cfg) {
-    var payload = {
+  function pushToGitHub(cfg, dataOverride) {
+    var payload = dataOverride || {
       settings: settings,
       applications: apps,
       courses: courses,
+      tombstones: tombstones,
       updatedAt: localStorage.getItem(LOCAL_UPDATED_KEY) || new Date().toISOString()
     };
 
@@ -929,23 +957,30 @@
     });
   }
 
-  function applyRemoteData(remoteData) {
-    suppressSyncPush = true;
-    if (remoteData.settings) saveSettings(remoteData.settings);
-    if (Array.isArray(remoteData.applications)) {
-      apps = remoteData.applications;
-      saveApps();
-    }
-    if (Array.isArray(remoteData.courses)) {
-      courses = remoteData.courses;
-      saveCourses();
-    }
-    if (remoteData.updatedAt) localStorage.setItem(LOCAL_UPDATED_KEY, remoteData.updatedAt);
-    suppressSyncPush = false;
-    applySettingsToUI();
-    tick();
-    renderTable();
-    renderCoursesTable();
+  // Merges two record arrays by id, keeping whichever copy of a shared id has
+  // the later updatedAt, and dropping anything covered by a tombstone (a
+  // record deleted on one device shouldn't be resurrected by the other's
+  // stale copy). Records without an updatedAt (legacy data) are treated as
+  // older than any timestamped record.
+  function mergeRecords(localArr, remoteArr, localTombs, remoteTombs) {
+    var mergedTombs = {};
+    Object.keys(localTombs || {}).forEach(function (id) { mergedTombs[id] = localTombs[id]; });
+    Object.keys(remoteTombs || {}).forEach(function (id) {
+      if (!mergedTombs[id] || remoteTombs[id] > mergedTombs[id]) mergedTombs[id] = remoteTombs[id];
+    });
+
+    var map = {};
+    (localArr || []).forEach(function (r) { map[r.id] = r; });
+    (remoteArr || []).forEach(function (r) {
+      var existing = map[r.id];
+      if (!existing || (r.updatedAt || "") > (existing.updatedAt || "")) map[r.id] = r;
+    });
+
+    var records = Object.keys(map)
+      .filter(function (id) { return !mergedTombs[id]; })
+      .map(function (id) { return map[id]; });
+
+    return { records: records, tombstones: mergedTombs };
   }
 
   function scheduleSyncPush() {
@@ -973,26 +1008,64 @@
     setSyncStatus("Syncing…");
 
     return fetchRemoteFile(cfg).then(function (remote) {
-      var localUpdatedAt = localStorage.getItem(LOCAL_UPDATED_KEY) || "1970-01-01T00:00:00.000Z";
-
       if (!remote) {
         return pushToGitHub(cfg).then(function () {
           setSyncStatus("Created remote data file. Synced just now.");
         });
       }
 
-      var remoteUpdatedAt = remote.data.updatedAt || "1970-01-01T00:00:00.000Z";
+      var remoteData = remote.data;
+      var remoteTombs = remoteData.tombstones || {};
+      var appsMerge = mergeRecords(apps, remoteData.applications, tombstones.apps, remoteTombs.apps);
+      var coursesMerge = mergeRecords(courses, remoteData.courses, tombstones.courses, remoteTombs.courses);
 
-      if (remoteUpdatedAt > localUpdatedAt) {
-        applyRemoteData(remote.data);
-        setSyncStatus("Pulled newer data from GitHub. Synced just now.");
-      } else if (localUpdatedAt > remoteUpdatedAt) {
-        return pushToGitHub(cfg).then(function () {
-          setSyncStatus("Pushed local changes to GitHub. Synced just now.");
-        });
-      } else {
-        setSyncStatus("Already up to date.");
+      var localUpdatedAt = localStorage.getItem(LOCAL_UPDATED_KEY) || "1970-01-01T00:00:00.000Z";
+      var remoteUpdatedAt = remoteData.updatedAt || "1970-01-01T00:00:00.000Z";
+      var mergedSettings = remoteUpdatedAt > localUpdatedAt ? (remoteData.settings || settings) : settings;
+      var mergedTombstones = { apps: appsMerge.tombstones, courses: coursesMerge.tombstones };
+
+      var localNeedsUpdate =
+        JSON.stringify(appsMerge.records) !== JSON.stringify(apps) ||
+        JSON.stringify(coursesMerge.records) !== JSON.stringify(courses) ||
+        JSON.stringify(mergedSettings) !== JSON.stringify(settings) ||
+        JSON.stringify(mergedTombstones) !== JSON.stringify(tombstones);
+
+      var remoteNeedsUpdate =
+        JSON.stringify(appsMerge.records) !== JSON.stringify(remoteData.applications || []) ||
+        JSON.stringify(coursesMerge.records) !== JSON.stringify(remoteData.courses || []) ||
+        JSON.stringify(mergedSettings) !== JSON.stringify(remoteData.settings || {}) ||
+        JSON.stringify(mergedTombstones) !== JSON.stringify(remoteTombs);
+
+      if (localNeedsUpdate) {
+        suppressSyncPush = true;
+        apps = appsMerge.records;
+        saveApps();
+        courses = coursesMerge.records;
+        saveCourses();
+        tombstones = mergedTombstones;
+        saveTombstones();
+        if (JSON.stringify(mergedSettings) !== JSON.stringify(settings)) saveSettings(mergedSettings);
+        localStorage.setItem(LOCAL_UPDATED_KEY, new Date().toISOString());
+        suppressSyncPush = false;
+        applySettingsToUI();
+        tick();
+        renderTable();
+        renderCoursesTable();
       }
+
+      if (remoteNeedsUpdate) {
+        return pushToGitHub(cfg, {
+          settings: mergedSettings,
+          applications: appsMerge.records,
+          courses: coursesMerge.records,
+          tombstones: mergedTombstones,
+          updatedAt: new Date().toISOString()
+        }).then(function () {
+          setSyncStatus(localNeedsUpdate ? "Merged changes from both devices. Synced just now." : "Pushed local changes. Synced just now.");
+        });
+      }
+
+      setSyncStatus(localNeedsUpdate ? "Pulled changes from GitHub. Synced just now." : "Already up to date.");
     }).catch(function (err) {
       setSyncStatus("Sync failed: " + err.message);
       if (showAlerts) alert("Sync failed: " + err.message);
@@ -1036,6 +1109,7 @@
   ensureSettings();
   apps = loadApps();
   courses = loadCourses();
+  tombstones = loadTombstones();
   renderTable();
   renderCoursesTable();
   tick();
