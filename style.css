@@ -491,6 +491,32 @@ tbody tr:hover { background: rgba(91, 140, 255, 0.06); cursor: pointer; }
   cursor: pointer;
 }
 
+.settings-section {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-section h2 {
+  font-size: 1rem;
+  margin: 0 0 6px;
+}
+
+.settings-section p {
+  margin: 0;
+}
+
+.sync-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+#syncStatus {
+  margin-top: 8px;
+  font-size: 0.8rem;
+}
+
 #setupSave { width: 100%; margin-top: 24px; }
 
 .modal-actions {

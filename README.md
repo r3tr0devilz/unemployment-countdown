@@ -32,6 +32,22 @@ Since data lives in `localStorage`, it's tied to one specific browser on one spe
 
 You can also turn on **auto-backup** in Settings (every 30 min / 1h / 6h / 1 day). It silently downloads a timestamped JSON snapshot to your browser's default download folder on that schedule — useful for a tablet left open continuously. Note this downloads a new file each time rather than overwriting one, so on a short interval left running for weeks it'll accumulate many files; clean out the download folder occasionally, or import the latest one and delete the rest.
 
+## Syncing across devices (PC + tablet, etc.)
+
+For real sync — not just backups — the app can read/write a `data.json` file directly to a **private** GitHub repo via the GitHub API, from Settings → "Sync across devices". This keeps applications/courses/settings identical across every device you open the site on. It does **not** use this site's own repo (which is public for free Pages hosting) — use a separate private repo just for data, so your company names/notes aren't exposed.
+
+Setup (once per device you want synced):
+
+1. Create a private repo to hold the data, e.g. `unemployment-countdown-data` (empty is fine — the app creates `data.json` in it on first sync).
+2. Generate a **fine-grained Personal Access Token**: go to [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new).
+   - Repository access → "Only select repositories" → pick the private repo from step 1.
+   - Permissions → Repository permissions → **Contents: Read and write**. Leave everything else as "No access".
+   - Generate, then copy the token (starts with `github_pat_…`).
+3. On the site: Settings → Sync across devices → enter the repo owner, repo name, and paste the token → **Save & Test**.
+4. Repeat steps 2–3 on every other device (each device gets its own token; you can revoke one from GitHub without affecting the others).
+
+Once configured, the app auto-pushes changes a few seconds after you edit something, and pulls on page load — whichever device has the newer data wins. The token lives only in that browser's `localStorage` and is **never** included in Export files. You can also hit **Sync Now** anytime to force it.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Fork it, change the colors, make it yours.

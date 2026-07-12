@@ -5,6 +5,9 @@
   var APPS_KEY = "jsc_applications";
   var COURSES_KEY = "jsc_courses";
   var LAST_BACKUP_KEY = "jsc_last_backup";
+  var SYNC_KEY = "jsc_sync_config";
+  var LOCAL_UPDATED_KEY = "jsc_local_updated_at";
+  var SYNC_FILE_PATH = "data.json";
 
   var settings = null;
   var apps = [];
@@ -16,6 +19,9 @@
   var autoBackupTimer = null;
   var audioCtx = null;
   var lastPlayedMinuteKey = null;
+  var syncPushTimer = null;
+  var suppressSyncPush = false;
+  var syncInFlight = false;
 
   // ---------- storage ----------
 
@@ -31,6 +37,7 @@
   function saveSettings(s) {
     settings = s;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+    touchLocalUpdated();
   }
 
   function loadApps() {
@@ -44,6 +51,7 @@
 
   function saveApps() {
     localStorage.setItem(APPS_KEY, JSON.stringify(apps));
+    touchLocalUpdated();
   }
 
   function loadCourses() {
@@ -57,6 +65,25 @@
 
   function saveCourses() {
     localStorage.setItem(COURSES_KEY, JSON.stringify(courses));
+    touchLocalUpdated();
+  }
+
+  function loadSyncConfig() {
+    try {
+      var raw = localStorage.getItem(SYNC_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveSyncConfig(cfg) {
+    localStorage.setItem(SYNC_KEY, JSON.stringify(cfg));
+  }
+
+  function touchLocalUpdated() {
+    localStorage.setItem(LOCAL_UPDATED_KEY, new Date().toISOString());
+    if (!suppressSyncPush) scheduleSyncPush();
   }
 
   function uid() {
@@ -164,6 +191,14 @@
     document.getElementById("setView").value = settings.defaultView || "applications";
     document.getElementById("setAutoBackup").value = settings.autoBackupMinutes || 0;
     document.getElementById("setTickSound").checked = !!settings.tickSound;
+
+    var syncCfg = loadSyncConfig();
+    document.getElementById("syncOwner").value = (syncCfg && syncCfg.owner) || document.getElementById("syncOwner").value;
+    document.getElementById("syncRepoName").value = (syncCfg && syncCfg.repo) || document.getElementById("syncRepoName").value;
+    document.getElementById("syncToken").value = "";
+    document.getElementById("syncToken").placeholder = (syncCfg && syncCfg.token) ? "•••• token saved (leave blank to keep)" : "github_pat_…";
+    setSyncStatus(syncCfg ? "Configured for " + syncCfg.owner + "/" + syncCfg.repo + "." : "Not configured.");
+
     settingsModal.classList.remove("hidden");
   });
 
@@ -827,6 +862,175 @@
     e.target.value = "";
   });
 
+  // ---------- GitHub sync ----------
+
+  function utf8ToBase64(str) {
+    return btoa(unescape(encodeURIComponent(str)));
+  }
+
+  function base64ToUtf8(b64) {
+    return decodeURIComponent(escape(atob(b64)));
+  }
+
+  function ghApiUrl(cfg) {
+    return "https://api.github.com/repos/" + cfg.owner + "/" + cfg.repo + "/contents/" + SYNC_FILE_PATH;
+  }
+
+  function ghHeaders(cfg) {
+    return {
+      "Authorization": "Bearer " + cfg.token,
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28"
+    };
+  }
+
+  function setSyncStatus(msg) {
+    var el = document.getElementById("syncStatus");
+    if (el) el.textContent = msg;
+  }
+
+  function fetchRemoteFile(cfg) {
+    return fetch(ghApiUrl(cfg), { headers: ghHeaders(cfg) }).then(function (res) {
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        return res.text().then(function (t) { throw new Error("GitHub API error " + res.status + ": " + t); });
+      }
+      return res.json().then(function (json) {
+        return { sha: json.sha, data: JSON.parse(base64ToUtf8(json.content)) };
+      });
+    });
+  }
+
+  function pushToGitHub(cfg) {
+    var payload = {
+      settings: settings,
+      applications: apps,
+      courses: courses,
+      updatedAt: localStorage.getItem(LOCAL_UPDATED_KEY) || new Date().toISOString()
+    };
+
+    return fetchRemoteFile(cfg).then(function (remote) {
+      var body = {
+        message: "Sync from browser at " + new Date().toISOString(),
+        content: utf8ToBase64(JSON.stringify(payload, null, 2))
+      };
+      if (remote) body.sha = remote.sha;
+
+      return fetch(ghApiUrl(cfg), {
+        method: "PUT",
+        headers: Object.assign({ "Content-Type": "application/json" }, ghHeaders(cfg)),
+        body: JSON.stringify(body)
+      }).then(function (res) {
+        if (!res.ok) {
+          return res.text().then(function (t) { throw new Error("Push failed " + res.status + ": " + t); });
+        }
+        return res.json();
+      });
+    });
+  }
+
+  function applyRemoteData(remoteData) {
+    suppressSyncPush = true;
+    if (remoteData.settings) saveSettings(remoteData.settings);
+    if (Array.isArray(remoteData.applications)) {
+      apps = remoteData.applications;
+      saveApps();
+    }
+    if (Array.isArray(remoteData.courses)) {
+      courses = remoteData.courses;
+      saveCourses();
+    }
+    if (remoteData.updatedAt) localStorage.setItem(LOCAL_UPDATED_KEY, remoteData.updatedAt);
+    suppressSyncPush = false;
+    applySettingsToUI();
+    tick();
+    renderTable();
+    renderCoursesTable();
+  }
+
+  function scheduleSyncPush() {
+    var cfg = loadSyncConfig();
+    if (!cfg || !cfg.token || !cfg.owner || !cfg.repo) return;
+    if (syncPushTimer) clearTimeout(syncPushTimer);
+    syncPushTimer = setTimeout(function () {
+      syncPushTimer = null;
+      pushToGitHub(cfg).then(function () {
+        setSyncStatus("Synced just now.");
+      }).catch(function (err) {
+        setSyncStatus("Sync push failed: " + err.message);
+      });
+    }, 4000);
+  }
+
+  function syncNow(showAlerts) {
+    var cfg = loadSyncConfig();
+    if (!cfg || !cfg.token || !cfg.owner || !cfg.repo) {
+      setSyncStatus("Not configured.");
+      return Promise.resolve();
+    }
+    if (syncInFlight) return Promise.resolve();
+    syncInFlight = true;
+    setSyncStatus("Syncing…");
+
+    return fetchRemoteFile(cfg).then(function (remote) {
+      var localUpdatedAt = localStorage.getItem(LOCAL_UPDATED_KEY) || "1970-01-01T00:00:00.000Z";
+
+      if (!remote) {
+        return pushToGitHub(cfg).then(function () {
+          setSyncStatus("Created remote data file. Synced just now.");
+        });
+      }
+
+      var remoteUpdatedAt = remote.data.updatedAt || "1970-01-01T00:00:00.000Z";
+
+      if (remoteUpdatedAt > localUpdatedAt) {
+        applyRemoteData(remote.data);
+        setSyncStatus("Pulled newer data from GitHub. Synced just now.");
+      } else if (localUpdatedAt > remoteUpdatedAt) {
+        return pushToGitHub(cfg).then(function () {
+          setSyncStatus("Pushed local changes to GitHub. Synced just now.");
+        });
+      } else {
+        setSyncStatus("Already up to date.");
+      }
+    }).catch(function (err) {
+      setSyncStatus("Sync failed: " + err.message);
+      if (showAlerts) alert("Sync failed: " + err.message);
+    }).then(function () {
+      syncInFlight = false;
+    });
+  }
+
+  document.getElementById("syncTestBtn").addEventListener("click", function () {
+    var owner = document.getElementById("syncOwner").value.trim();
+    var repo = document.getElementById("syncRepoName").value.trim();
+    var typedToken = document.getElementById("syncToken").value.trim();
+    var existingCfg = loadSyncConfig();
+    var token = typedToken || (existingCfg && existingCfg.token) || "";
+
+    if (!owner || !repo || !token) {
+      setSyncStatus("Fill in owner, repo, and token.");
+      return;
+    }
+
+    var cfg = { owner: owner, repo: repo, token: token };
+    setSyncStatus("Testing connection…");
+
+    fetchRemoteFile(cfg).then(function () {
+      saveSyncConfig(cfg);
+      document.getElementById("syncToken").value = "";
+      document.getElementById("syncToken").placeholder = "•••• token saved (leave blank to keep)";
+      setSyncStatus("Connected. Saved — syncing now…");
+      return syncNow(true);
+    }).catch(function (err) {
+      setSyncStatus("Connection failed: " + err.message);
+    });
+  });
+
+  document.getElementById("syncNowBtn").addEventListener("click", function () {
+    syncNow(true);
+  });
+
   // ---------- init ----------
 
   ensureSettings();
@@ -836,4 +1040,8 @@
   renderCoursesTable();
   tick();
   setInterval(tick, 1000);
+
+  if (settings) {
+    syncNow(false);
+  }
 })();

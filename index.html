@@ -326,6 +326,26 @@
       <button type="button" id="testTickSoundBtn" class="btn btn-ghost">Test sound</button>
     </div>
 
+    <div class="settings-section">
+      <h2>Sync across devices</h2>
+      <p class="muted">Syncs your data to a private GitHub repo so it stays the same on every device you open this on. The token is stored only in this browser and is never included in Export files.</p>
+    </div>
+
+    <label for="syncOwner">Repo owner</label>
+    <input type="text" id="syncOwner" placeholder="e.g. r3tr0devilz" value="r3tr0devilz" />
+
+    <label for="syncRepoName">Private data repo name</label>
+    <input type="text" id="syncRepoName" placeholder="e.g. unemployment-countdown-data" value="unemployment-countdown-data" />
+
+    <label for="syncToken">Personal Access Token (Contents: Read and write on that repo only)</label>
+    <input type="password" id="syncToken" placeholder="github_pat_…" autocomplete="off" />
+
+    <div class="sync-actions">
+      <button type="button" id="syncTestBtn" class="btn btn-ghost">Save &amp; Test</button>
+      <button type="button" id="syncNowBtn" class="btn btn-ghost">Sync Now</button>
+    </div>
+    <div class="muted" id="syncStatus">Not configured.</div>
+
     <div class="modal-actions">
       <button id="wipeBtn" class="btn btn-danger">Erase all data</button>
       <div class="spacer"></div>
